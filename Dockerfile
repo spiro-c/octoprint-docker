@@ -23,7 +23,7 @@ FROM python:${PYTHON_BASE_IMAGE} AS build
 ARG octoprint_ref
 ENV octoprint_ref ${octoprint_ref:-master}
 
-RUN apt-get update && apt-get install -y \
+RUN apt-get update && apt-get install -y --no-install-recommends \
   avrdude \
   build-essential \
   cmake \
@@ -41,33 +41,49 @@ RUN apt-get update && apt-get install -y \
   openssh-client \
   v4l-utils \
   xz-utils \
-  zlib1g-dev
+  zlib1g-dev \
+ \
+# Install octoprint
+&&	curl -fsSLO --compressed --retry 3 --retry-delay 10 \
+  https://github.com/OctoPrint/OctoPrint/archive/${octoprint_ref}.tar.gz \
+	&& mkdir -p /opt/octoprint \
+  && tar xzf ${octoprint_ref}.tar.gz --strip-components 1 -C /opt/octoprint --no-same-owner && cd /opt/octoprint \
+\
+#WORKDIR /opt/octoprint
+  && pip install --no-cache-dir /opt/octoprint \
+\
+&& mkdir -p /octoprint/octoprint /octoprint/plugins \
+\
+# Install mjpg-streamer
+&& curl -fsSLO --compressed --retry 3 --retry-delay 10 \
+  https://github.com/jacksonliam/mjpg-streamer/archive/master.tar.gz \
+  && mkdir /mjpg \
+  && tar xzf master.tar.gz -C /mjpg && cd /mjpg/mjpg-streamer-master/mjpg-streamer-experimental \
+\
+#WORKDIR /mjpg/mjpg-streamer-master/mjpg-streamer-experimental
+&& make \
+&& make install \
+\
+#Clean up
+  && find /usr/local \
+  \( -type d -a -name test -o -name tests -o -name '__pycache__' \) \
+  -o \( -type f -a -name '*.pyc' -o -name '*.pyo' \) \
+  -exec rm -rf '{}' + \
+  \
+  && apt-get clean -y \
+  && apt-get autoremove -y \
+  && apt remove -y build-essential \
+  && rm -fr \
+  /var/{cache,log}/* \
+  /${octoprint_ref}.tar.gz \
+  /var/lib/apt/lists/* \
+  /root/.cache \
+  && find /tmp/ -mindepth 1  -delete
 
 # unpack s6
 COPY --from=s6build /tmp /tmp
 RUN s6tar=$(find /tmp -name "s6-overlay-*.tar.gz") \
-  && tar xzf $s6tar -C / 
-
-# Install octoprint
-RUN	curl -fsSLO --compressed --retry 3 --retry-delay 10 \
-  https://github.com/OctoPrint/OctoPrint/archive/${octoprint_ref}.tar.gz \
-	&& mkdir -p /opt/octoprint \
-  && tar xzf ${octoprint_ref}.tar.gz --strip-components 1 -C /opt/octoprint --no-same-owner
-
-WORKDIR /opt/octoprint
-RUN pip install .
-RUN mkdir -p /octoprint/octoprint /octoprint/plugins
-
-# Install mjpg-streamer
-RUN curl -fsSLO --compressed --retry 3 --retry-delay 10 \
-  https://github.com/jacksonliam/mjpg-streamer/archive/master.tar.gz \
-  && mkdir /mjpg \
-  && tar xzf master.tar.gz -C /mjpg
-
-
-WORKDIR /mjpg/mjpg-streamer-master/mjpg-streamer-experimental
-RUN make
-RUN make install
+  && tar xzf $s6tar -C /
 
 # Copy services into s6 servicedir and set default ENV vars
 COPY root /
